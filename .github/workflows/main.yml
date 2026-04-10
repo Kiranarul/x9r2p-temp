@@ -49,11 +49,18 @@ jobs:
              $address = $tunnel.tunnels[0].public_url
              $cleanAddress = $address.Replace("tcp://", "")
              
+             # The User's local network is blocking DNS resolution for ngrok.io.
+             # We will resolve the IP address here on the runner and give them the raw IP.
+             $hostPart = $cleanAddress.Split(":")[0]
+             $portPart = $cleanAddress.Split(":")[1]
+             $ip = [System.Net.Dns]::GetHostAddresses($hostPart)[0].IPAddressToString
+             $ipAddress = "$ip:$portPart"
+             
              Write-Host "===================================="
-             Write-Host "RDP TUNNEL READY - THE REAL FIX"
+             Write-Host "RDP TUNNEL READY - DNS BYPASS"
              Write-Host "1. Open Windows Remote Desktop Connection"
-             Write-Host "2. Paste this exact address:"
-             Write-Host "   ADDRESS:  $cleanAddress"
+             Write-Host "2. Paste this exact RAW IP AND PORT:"
+             Write-Host "   ADDRESS:  $ipAddress"
              Write-Host "3. Username: runneradmin"
              Write-Host "4. Password: Windows123!"
              Write-Host "===================================="
