@@ -51,6 +51,13 @@ jobs:
           Write-Host "Password: $env:RDP_PASSWORD"
           Write-Host "======================"
 
+      - name: Setup ngrok TCP Tunnel
+        run: |
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip -DestinationPath . -Force
+          .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+
       - name: Keep Alive
         run: |
           while ($true) {
