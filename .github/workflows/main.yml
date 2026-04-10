@@ -27,20 +27,17 @@ jobs:
 
       - name: Enable RDP (Nuclear Fix)
         run: |
-          # 1. Disable Firewall Entirely (Force-disable all profiles)
+          # 1. Disable Firewall Entirely
           Write-Host "Disabling Windows Firewall..."
           netsh advfirewall set allprofiles state off
           
-          # 2. Enable RDP & Disable Network Level Authentication (NLA)
+          # 2. Enable RDP & Disable NLA
           Write-Host "Configuring RDP Registry..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fAllowToGetHelp" -Value 1 -Force
           
-          # 3. Ensure Remote Desktop is allowed (Backup)
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          # 4. Force Restart RDP Service
+          # 3. Force Restart RDP Service
           Write-Host "Restarting RDP Service..."
           Restart-Service -Name TermService -Force
 
@@ -51,36 +48,41 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
 
-      - name: Setup Ngrok Tunnel
+      - name: Setup Cloudflare Tunnel
         run: |
-          Write-Host "Downloading Ngrok..."
-          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath . -Force
+          Write-Host "Downloading Cloudflared..."
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
           
-          Write-Host "Configuring Ngrok Auth..."
-          .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          Write-Host "Starting Cloudflare Quick Tunnel..."
+          # Start tunnel and capture output to find the hostname
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:3389" -NoNewWindow -RedirectStandardError "cloudflare.log"
           
-          Write-Host "Starting Ngrok Tunnel..."
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+          # Wait for tunnel registration
+          Start-Sleep -Seconds 15
           
-          # Wait for tunnel initialization
-          Start-Sleep -Seconds 10
+          $log = Get-Content "cloudflare.log"
           
-          # Retrieve URL from Local API
-          $tunnel = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
-          $publicUrl = $tunnel.tunnels[0].public_url
-          
-          Write-Host "======================"
-          Write-Host "NUCLEAR FIX SUCCESS!"
-          Write-Host "NGROK RDP ADDRESS: $publicUrl"
-          Write-Host "Username: RDP"
-          Write-Host "Password: AnyDesk123!"
-          Write-Host "======================"
+          # Search for the trycloudflare URL
+          $match = $log | Select-String -Pattern "https://[a-z0-9-]+\.trycloudflare\.com"
+          if ($match) {
+             $url = $match.Matches[0].Value
+             $hostname = $url.Replace("https://", "")
+             Write-Host "======================"
+             Write-Host "CLOUDFLARE TUNNEL READY!"
+             Write-Host "HOSTNAME: $hostname"
+             Write-Host "Username: RDP"
+             Write-Host "Password: AnyDesk123!"
+             Write-Host "======================"
+          } else {
+             Write-Error "Could not find Cloudflare URL in logs. Printing logs for debug:"
+             $log | Out-String | Write-Host
+             exit 1
+          }
 
       - name: Keep Alive
         run: |
           while ($true) {
-            Write-Host "[$(Get-Date)] RDP Session Active..."
+            Write-Host "[$(Get-Date)] Cloudflare Tunnel Active..."
             Start-Sleep -Seconds 300
           }
 
