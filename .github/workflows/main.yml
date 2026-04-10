@@ -39,49 +39,37 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
           Start-Service TermService -ErrorAction SilentlyContinue
 
-      - name: Setup Pinggy Tunnel
+      - name: Setup Ngrok Tunnel (Reliable)
         run: |
-          Write-Host "Generating SSH Key for Pinggy..."
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.ssh" | Out-Null
-          ssh-keygen -t rsa -b 4096 -f "$env:USERPROFILE\.ssh\id_rsa" -N '""' -q
+          Write-Host "Downloading Ngrok..."
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip -DestinationPath . -Force
           
-          Write-Host "Creating SSH Tunnel via Pinggy..."
-          # Start SSH tunnel targeting port 443 with strict host checking disabled
-          Start-Process -FilePath "ssh" -ArgumentList "-p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:127.0.0.1:3389 tcp@a.pinggy.io" -NoNewWindow -RedirectStandardError "pinggy_err.log" -RedirectStandardOutput "pinggy.log"
+          Write-Host "Configuring Ngrok..."
+          # Uses your existing GitHub Secret for Ngrok
+          .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
           
-          Write-Host "Waiting for tunnel initialization..."
-          Start-Sleep -Seconds 15
+          Write-Host "Starting Ngrok tunnel..."
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
           
-          # Pinggy often prints the allocation message to STDERR instead of STDOUT
-          $log = Get-Content "pinggy.log", "pinggy_err.log" -ErrorAction SilentlyContinue
+          # Wait for tunnel initialization
+          Start-Sleep -Seconds 10
           
-          # Match either the full URL or "Allocated port 12345"
-          $urlMatch = $log | Select-String -Pattern "tcp://[a-zA-Z0-9.-]+:[0-9]+"
-          $portMatch = $log | Select-String -Pattern "Allocated port ([0-9]+)"
-          
-          $address = ""
-          if ($urlMatch) {
-             $address = $urlMatch.Matches[0].Value.Replace("tcp://", "")
-          } elseif ($portMatch) {
-             $port = $portMatch.Matches[0].Groups[1].Value
-             $address = "tcp.a.pinggy.io:$port"
-          }
-          
-          if ($address) {
+          try {
+             $tunnel = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
+             $address = $tunnel.tunnels[0].public_url
+             $cleanAddress = $address.Replace("tcp://", "")
+             
              Write-Host "===================================="
              Write-Host "RDP TUNNEL READY - ZERO INSTALL!"
              Write-Host "1. Open Windows Remote Desktop Connection"
              Write-Host "2. Paste this exact address:"
-             Write-Host "   ADDRESS:  $address"
+             Write-Host "   ADDRESS:  $cleanAddress"
              Write-Host "3. Username: RDP"
              Write-Host "4. Password: AnyDesk123!"
              Write-Host "===================================="
-          } else {
-             Write-Error "Could not find Pinggy URL/Port in logs. Printing logs for debug:"
-             Write-Host "--- STDOUT ---"
-             Get-Content "pinggy.log" -ErrorAction SilentlyContinue | Out-String | Write-Host
-             Write-Host "--- STDERR ---"
-             Get-Content "pinggy_err.log" -ErrorAction SilentlyContinue | Out-String | Write-Host
+          } catch {
+             Write-Error "Failed to retrieve Ngrok URL. Check if NGROK_AUTH_TOKEN secret is set correctly."
              exit 1
           }
 
