@@ -70,16 +70,29 @@ jobs:
           $result = Test-NetConnection -ComputerName localhost -Port 3389
           Write-Host "RDP Local Test: $($result.TcpTestSucceeded)"
 
-      - name: Start ngrok TCP Tunnel (DEBUG)
+      - name: Start ngrok TCP Tunnel (VISIBLE OUTPUT)
         run: |
           Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath . -Force
+          Expand-Archive ngrok.zip -Force
 
           .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
 
-          # Run ngrok in foreground so logs show
+          # Start ngrok in background
 
-          .\ngrok.exe tcp 3389
+          Start-Process .\ngrok.exe -ArgumentList "tcp 3389"
+
+          Start-Sleep -Seconds 10
+
+          # Fetch real tunnel info
+
+          $resp = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
+
+          $url = $resp.tunnels[0].public_url
+
+          Write-Host "======================"
+          Write-Host "REAL NGROK ADDRESS:"
+          Write-Host $url
+          Write-Host "======================"
 
       - name: Keep Alive
         run: |
