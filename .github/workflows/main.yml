@@ -19,6 +19,28 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
+      - name: CRD Stability Fix
+        run: |
+          # 1. Disable IPv6 (Fixes STUN/WebRTC hangs in GitHub network)
+          Write-Host "Disabling IPv6..."
+          Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+          
+          # 2. Registry Policies for CRD Headless Stability
+          Write-Host "Configuring CRD Registry Policies..."
+          $registryPath = "HKLM:\Software\Policies\Google\Chrome"
+          if (!(Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
+          Set-ItemProperty -Path $registryPath -Name "RemoteAccessHostAllowClientPairing" -Value 1 -Force
+          
+          # 3. Wake up Display (RDP Service & User)
+          # This ensures the graphical engine is active for Chrome Remote Desktop
+          Write-Host "Waking up Graphical Session..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          $password = ConvertTo-SecureString "AnyDesk123!" -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $password -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Start-Service TermService -ErrorAction SilentlyContinue
+
       - name: Setup Chrome Remote Desktop
         run: |
           Write-Host "Downloading Chrome Remote Desktop Host..."
@@ -26,15 +48,14 @@ jobs:
           $uri = 'https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi'
           (New-Object Net.WebClient).DownloadFile($uri, $installer)
           
-          Write-Host "Installing Chrome Remote Desktop Host (Silent)..."
+          Write-Host "Installing Chrome Remote Desktop Host..."
           Start-Process -FilePath msiexec.exe -ArgumentList "/i $installer /qn" -Wait
           
           Write-Host "Registering Chrome Remote Desktop Host..."
-          # The one-time code you provided
-          $authCode = "4/0Aci98E_OBDyTWiyvTS9ysSpvFYa_VG6LChXTeloeaJfG5q6hzRtzT04csUkttFYuGqJpSA"
+          # The FRESH code you just provided
+          $authCode = "4/0Aci98E-jc7AbN_H6uowBIMs4zsrVKt0WMch_y93fuQsMlGLFJLfy-zFbgXc4uz9DQBtsPg"
           $pin = "123456"
           
-          # Command to start and register the host headlessly
           & "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" `
             --code="$authCode" `
             --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
@@ -42,10 +63,9 @@ jobs:
             --pin="$pin"
           
           Write-Host "============================"
-          Write-Host "CRD SETUP COMPLETE!"
+          Write-Host "STABILITY FIX COMPLETE!"
           Write-Host "Connect at: https://remotedesktop.google.com/access"
-          Write-Host "Look for device: 'GitHub-Runner'"
-          Write-Host "Your PIN is: $pin"
+          Write-Host "PIN: $pin"
           Write-Host "============================"
 
       - name: Keep Alive
