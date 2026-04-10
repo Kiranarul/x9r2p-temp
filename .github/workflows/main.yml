@@ -1,78 +1,25 @@
-name: RDP
+name: CI
 
-on:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 3600
+  build:
 
-    permissions:
-      contents: write
-      actions: read
+    runs-on: windows-latest
 
     steps:
-      - name: Enable RDP (The Real Fix)
-        run: |
-          Write-Host "1. Enabling Remote Desktop Registry..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          
-          Write-Host "2. Allowing RDP through Windows Firewall..."
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          Write-Host "3. Forcing secure NLA (Required for runneradmin)..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-          
-          Write-Host "4. Setting password for the built-in 'runneradmin'..."
-          $password = ConvertTo-SecureString "Windows123!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
-
-      - name: Setup Ngrok Tunnel (Reliable)
-        run: |
-          Write-Host "Downloading Ngrok..."
-          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath . -Force
-          
-          Write-Host "Configuring Ngrok..."
-          # Uses your existing GitHub Secret for Ngrok
-          .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          
-          Write-Host "Starting Ngrok tunnel..."
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
-          
-          # Wait for tunnel initialization
-          Start-Sleep -Seconds 10
-          
-          try {
-             $tunnel = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
-             $address = $tunnel.tunnels[0].public_url
-             $cleanAddress = $address.Replace("tcp://", "")
-             
-             # The User's local network is blocking DNS resolution for ngrok.io.
-             # We will resolve the IP address here on the runner and give them the raw IP.
-             $hostPart = $cleanAddress.Split(":")[0]
-             $portPart = $cleanAddress.Split(":")[1]
-             $ip = [System.Net.Dns]::GetHostAddresses($hostPart)[0].IPAddressToString
-             $ipAddress = $ip + ":" + $portPart
-             
-             Write-Host "===================================="
-             Write-Host "RDP TUNNEL READY - DNS BYPASS"
-             Write-Host "1. Open Windows Remote Desktop Connection"
-             Write-Host "2. Paste this exact RAW IP AND PORT:"
-             Write-Host "   ADDRESS:  $ipAddress"
-             Write-Host "3. Username: runneradmin"
-             Write-Host "4. Password: Windows123!"
-             Write-Host "===================================="
-          } catch {
-             Write-Error "Failed to retrieve Ngrok URL. Check if NGROK_AUTH_TOKEN secret is set correctly."
-             exit 1
-          }
-
-      - name: Keep Alive
-        run: |
-          while ($true) {
-            Write-Host "[$(Get-Date)] Chrome Remote Desktop Active..."
-            Start-Sleep -Seconds 300
-          }
-
+    - name: Download
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+    - name: Extract
+      run: Expand-Archive ngrok.zip
+    - name: Auth
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+    - name: Create Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
