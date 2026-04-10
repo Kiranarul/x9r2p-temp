@@ -13,31 +13,20 @@ jobs:
       actions: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: RDP Nuclear Fixes
+      - name: Enable RDP (The Real Fix)
         run: |
-          # 1. Disable IPv6
-          Write-Host "Disabling IPv6..."
-          Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+          Write-Host "1. Enabling Remote Desktop Registry..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           
-          # 2. Disable Firewall
-          Write-Host "Disabling Windows Firewall..."
-          netsh advfirewall set allprofiles state off
+          Write-Host "2. Allowing RDP through Windows Firewall..."
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           
-          # 3. Wake up Display and Disable NLA
-          Write-Host "Waking up Graphical Session & Disabling NLA..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fAllowToGetHelp" -Value 1 -Force
+          Write-Host "3. Forcing secure NLA (Required for runneradmin)..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
           
-          # 4. Create Local User
-          $password = ConvertTo-SecureString "AnyDesk123!" -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $password -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-          Start-Service TermService -ErrorAction SilentlyContinue
+          Write-Host "4. Setting password for the built-in 'runneradmin'..."
+          $password = ConvertTo-SecureString "Windows123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $password
 
       - name: Setup Ngrok Tunnel (Reliable)
         run: |
@@ -61,12 +50,12 @@ jobs:
              $cleanAddress = $address.Replace("tcp://", "")
              
              Write-Host "===================================="
-             Write-Host "RDP TUNNEL READY - ZERO INSTALL!"
+             Write-Host "RDP TUNNEL READY - THE REAL FIX"
              Write-Host "1. Open Windows Remote Desktop Connection"
              Write-Host "2. Paste this exact address:"
              Write-Host "   ADDRESS:  $cleanAddress"
-             Write-Host "3. Username: RDP"
-             Write-Host "4. Password: AnyDesk123!"
+             Write-Host "3. Username: runneradmin"
+             Write-Host "4. Password: Windows123!"
              Write-Host "===================================="
           } catch {
              Write-Error "Failed to retrieve Ngrok URL. Check if NGROK_AUTH_TOKEN secret is set correctly."
