@@ -28,17 +28,21 @@ jobs:
       - name: Enable RDP (Nuclear Fix)
         run: |
           # 1. Disable Firewall Entirely
-          Write-Host "Disabling Windows Firewall..."
           netsh advfirewall set allprofiles state off
           
           # 2. Enable RDP & Disable NLA
-          Write-Host "Configuring RDP Registry..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fAllowToGetHelp" -Value 1 -Force
           
-          # 3. Force Restart RDP Service
-          Write-Host "Restarting RDP Service..."
+          # 3. Force RDP to use TCP only (No UDP)
+          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name "SelectTransport" -Value 1 -Force
+          
+          # 4. Set RDP Security Layer to RDP (To avoid handshake issues)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
+          
+          # 5. Force Restart RDP Service
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User
@@ -53,9 +57,9 @@ jobs:
           Write-Host "Downloading Cloudflared..."
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
           
-          Write-Host "Starting Cloudflare Quick Tunnel..."
-          # Start tunnel and capture output to find the hostname
-          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:3389" -NoNewWindow -RedirectStandardError "cloudflare.log"
+          Write-Host "Starting Cloudflare Quick Tunnel (RDP Mode)..."
+          # Using rdp:// instead of tcp:// for better WebSocket handling
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url rdp://localhost:3389" -NoNewWindow -RedirectStandardError "cloudflare.log"
           
           # Wait for tunnel registration
           Start-Sleep -Seconds 15
