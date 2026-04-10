@@ -25,66 +25,55 @@ jobs:
           echo "PUBLIC_IP=$ip" >> $env:GITHUB_ENV
           Write-Host "Public IP: $ip"
 
-      - name: Setup AnyDesk
+      - name: Enable RDP
         run: |
-          # Download AnyDesk
-          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "AnyDesk.exe"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service -Name TermService
 
-          # Install AnyDesk silently to enable service-based unattended access
-          Write-Host "Installing AnyDesk..."
-          Start-Process -FilePath ".\AnyDesk.exe" -ArgumentList "--install C:\AnyDesk --start-with-win --silent" -Wait
+      - name: Create RDP User
+        run: |
+          $password = ConvertTo-SecureString "AnyDesk123!" -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $password -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
 
-          # Wait for installation block and service to start
-          $anydeskPath = "C:\AnyDesk\AnyDesk.exe"
-          $maxRetries = 20
-          $retryCount = 0
-
-          while (-not (Test-Path $anydeskPath) -and $retryCount -lt $maxRetries) {
-            Write-Host "Waiting for AnyDesk installation... ($retryCount)"
-            Start-Sleep -Seconds 3
-            $retryCount++
+      - name: Setup Bore Tunnel
+        run: |
+          Write-Host "Downloading Bore..."
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
+          Expand-Archive "bore.zip" -DestinationPath . -Force
+          
+          Write-Host "Starting Bore Tunnel..."
+          Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -NoNewWindow -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log"
+          
+          # Wait for the tunnel to establish and logs to populate
+          Start-Sleep -Seconds 10
+          
+          $log = Get-Content "bore.log"
+          
+          # Extract the remote address (e.g. bore.pub:12345)
+          $match = $log | Select-String -Pattern "bore.pub:\d+"
+          if ($match) {
+             $address = $match.Matches[0].Value
+             Write-Host "======================"
+             Write-Host "SUCCESS! CONNECT NOW"
+             Write-Host "BORE RDP ADDRESS: $address"
+             Write-Host "Username: RDP"
+             Write-Host "Password: AnyDesk123!"
+             Write-Host "======================"
+          } else {
+             Write-Error "Could not find bore address in logs. Printing full log for debug:"
+             $log | Out-String | Write-Host
+             Get-Content "bore_err.log" | Out-String | Write-Host
+             exit 1
           }
-
-          if (-not (Test-Path $anydeskPath)) {
-            Write-Error "AnyDesk installation failed or took too long."
-            exit 1
-          }
-
-          # Set Unattended Access Password
-          Write-Host "Setting password..."
-          echo "AnyDesk123!" | & $anydeskPath --set-password
-
-          # Retrieve AnyDesk ID with retries
-          Write-Host "Retrieving AnyDesk ID..."
-          $anydeskId = $null
-          $retryCount = 0
-          while ($null -eq $anydeskId -and $retryCount -lt $maxRetries) {
-            $anydeskId = & $anydeskPath --get-id
-            if ($anydeskId) {
-              $anydeskId = $anydeskId.Trim()
-              if ($anydeskId -match '^\d+$' -or $anydeskId -match '^[\d\s]+$') { break }
-            }
-            $anydeskId = $null
-            Write-Host "Waiting for AnyDesk ID registration... ($retryCount)"
-            Start-Sleep -Seconds 5
-            $retryCount++
-          }
-
-          if ($null -eq $anydeskId) {
-            Write-Error "Failed to retrieve a valid AnyDesk ID."
-            exit 1
-          }
-
-          Write-Host "======================"
-          Write-Host "ANYDESK ACCESS DETAILS"
-          Write-Host "AnyDesk ID: $anydeskId"
-          Write-Host "Password: AnyDesk123!"
-          Write-Host "======================"
 
       - name: Keep Alive
         run: |
           while ($true) {
-            Write-Host "[$(Get-Date)] AnyDesk Active - Session Running..."
+            Write-Host "[$(Get-Date)] RDP Session Active..."
             Start-Sleep -Seconds 300
           }
 
