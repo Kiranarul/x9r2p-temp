@@ -25,11 +25,25 @@ jobs:
           echo "PUBLIC_IP=$ip" >> $env:GITHUB_ENV
           Write-Host "Public IP: $ip"
 
-      - name: Enable RDP and Open Port
+      - name: Enable RDP properly
         run: |
+
+          # Enable RDP
+
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          netsh advfirewall firewall add rule name="RDP-Open" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
+
+          # Enable firewall rule properly
+
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          # Ensure service is running
+
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service -Name TermService
+
+          # Wait a bit to ensure RDP is ready
+
+          Start-Sleep -Seconds 10
 
       - name: Create RDP User
         run: |
