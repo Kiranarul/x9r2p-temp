@@ -27,10 +27,18 @@ jobs:
 
       - name: Enable RDP
         run: |
+          # Enable RDP connections
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          
+          # Disable Network Level Authentication (NLA) - CRITICAL for tunnels
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          
+          # Allow RDP through firewall
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Ensure RDP service is running
           Set-Service -Name TermService -StartupType Automatic
-          Start-Service -Name TermService
+          Restart-Service -Name TermService -Force
 
       - name: Create RDP User
         run: |
@@ -41,6 +49,15 @@ jobs:
 
       - name: Setup Bore Tunnel
         run: |
+          Write-Host "Verifying RDP is listening locally..."
+          $rdpTest = Test-NetConnection -ComputerName localhost -Port 3389
+          if ($rdpTest.TcpTestSucceeded) {
+             Write-Host "RDP is listening on 3389. Good."
+          } else {
+             Write-Host "RDP is NOT listening! Trying to force start service again..."
+             Start-Service -Name TermService -ErrorAction SilentlyContinue
+          }
+
           Write-Host "Downloading Bore..."
           Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
           Expand-Archive "bore.zip" -DestinationPath . -Force
@@ -64,7 +81,7 @@ jobs:
              Write-Host "Password: AnyDesk123!"
              Write-Host "======================"
           } else {
-             Write-Error "Could not find bore address in logs. Printing full log for debug:"
+             Write-Error "Could not find bore address in logs. Printing logs for debug:"
              $log | Out-String | Write-Host
              Get-Content "bore_err.log" | Out-String | Write-Host
              exit 1
