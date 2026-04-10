@@ -33,7 +33,7 @@ jobs:
 
       - name: Create RDP User
         run: |
-          $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
+          $password = ([guid]::NewGuid().ToString("N").Substring(0, 12)) + "A1!x"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
