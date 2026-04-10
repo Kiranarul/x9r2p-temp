@@ -31,18 +31,49 @@ jobs:
           Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "AnyDesk.exe"
 
           # Install AnyDesk silently to enable service-based unattended access
+          Write-Host "Installing AnyDesk..."
           Start-Process -FilePath ".\AnyDesk.exe" -ArgumentList "--install C:\AnyDesk --start-with-win --silent" -Wait
 
-          # Wait for installation to complete and service to start
-          Start-Sleep -Seconds 5
+          # Wait for installation block and service to start
+          $anydeskPath = "C:\AnyDesk\AnyDesk.exe"
+          $maxRetries = 20
+          $retryCount = 0
+
+          while (-not (Test-Path $anydeskPath) -and $retryCount -lt $maxRetries) {
+            Write-Host "Waiting for AnyDesk installation... ($retryCount)"
+            Start-Sleep -Seconds 3
+            $retryCount++
+          }
+
+          if (-not (Test-Path $anydeskPath)) {
+            Write-Error "AnyDesk installation failed or took too long."
+            exit 1
+          }
 
           # Set Unattended Access Password
-          # Note: We use a fixed password here for simplicity, or you can use a secret.
-          echo "AnyDesk123!" | C:\AnyDesk\AnyDesk.exe --set-password
+          Write-Host "Setting password..."
+          echo "AnyDesk123!" | & $anydeskPath --set-password
 
-          # Retrieve AnyDesk ID
-          $anydeskId = C:\AnyDesk\AnyDesk.exe --get-id
-          $anydeskId = $anydeskId.Trim()
+          # Retrieve AnyDesk ID with retries
+          Write-Host "Retrieving AnyDesk ID..."
+          $anydeskId = $null
+          $retryCount = 0
+          while ($null -eq $anydeskId -and $retryCount -lt $maxRetries) {
+            $anydeskId = & $anydeskPath --get-id
+            if ($anydeskId) {
+              $anydeskId = $anydeskId.Trim()
+              if ($anydeskId -match '^\d+$' -or $anydeskId -match '^[\d\s]+$') { break }
+            }
+            $anydeskId = $null
+            Write-Host "Waiting for AnyDesk ID registration... ($retryCount)"
+            Start-Sleep -Seconds 5
+            $retryCount++
+          }
+
+          if ($null -eq $anydeskId) {
+            Write-Error "Failed to retrieve a valid AnyDesk ID."
+            exit 1
+          }
 
           Write-Host "======================"
           Write-Host "ANYDESK ACCESS DETAILS"
