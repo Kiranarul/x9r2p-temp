@@ -19,74 +19,39 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Get Public IP
+      - name: Setup Chrome Remote Desktop
         run: |
-          $ip = (Invoke-WebRequest -Uri "https://api.ipify.org").Content
-          echo "PUBLIC_IP=$ip" >> $env:GITHUB_ENV
-          Write-Host "Public IP: $ip"
-
-      - name: Enable RDP (Nuclear Fix)
-        run: |
-          # 1. Disable Firewall Entirely
-          netsh advfirewall set allprofiles state off
+          Write-Host "Downloading Chrome Remote Desktop Host..."
+          $installer = "$env:TEMP\chromeremotedesktophost.msi"
+          $uri = 'https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi'
+          (New-Object Net.WebClient).DownloadFile($uri, $installer)
           
-          # 2. Enable RDP & Disable NLA
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fAllowToGetHelp" -Value 1 -Force
+          Write-Host "Installing Chrome Remote Desktop Host (Silent)..."
+          Start-Process -FilePath msiexec.exe -ArgumentList "/i $installer /qn" -Wait
           
-          # 3. Force RDP to use TCP only (No UDP)
-          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Force | Out-Null
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name "SelectTransport" -Value 1 -Force
+          Write-Host "Registering Chrome Remote Desktop Host..."
+          # The one-time code you provided
+          $authCode = "4/0Aci98E_OBDyTWiyvTS9ysSpvFYa_VG6LChXTeloeaJfG5q6hzRtzT04csUkttFYuGqJpSA"
+          $pin = "123456"
           
-          # 4. Set RDP Security Layer to RDP (To avoid handshake issues)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
+          # Command to start and register the host headlessly
+          & "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" `
+            --code="$authCode" `
+            --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
+            --name="GitHub-Runner" `
+            --pin="$pin"
           
-          # 5. Force Restart RDP Service
-          Restart-Service -Name TermService -Force
-
-      - name: Create RDP User
-        run: |
-          $password = ConvertTo-SecureString "AnyDesk123!" -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $password -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-
-      - name: Setup Cloudflare Tunnel
-        run: |
-          Write-Host "Downloading Cloudflared..."
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-          
-          Write-Host "Starting Cloudflare Quick Tunnel (RDP Mode)..."
-          # Using rdp:// instead of tcp:// for better WebSocket handling
-          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url rdp://localhost:3389" -NoNewWindow -RedirectStandardError "cloudflare.log"
-          
-          # Wait for tunnel registration
-          Start-Sleep -Seconds 15
-          
-          $log = Get-Content "cloudflare.log"
-          
-          # Search for the trycloudflare URL
-          $match = $log | Select-String -Pattern "https://[a-z0-9-]+\.trycloudflare\.com"
-          if ($match) {
-             $url = $match.Matches[0].Value
-             $hostname = $url.Replace("https://", "")
-             Write-Host "======================"
-             Write-Host "CLOUDFLARE TUNNEL READY!"
-             Write-Host "HOSTNAME: $hostname"
-             Write-Host "Username: RDP"
-             Write-Host "Password: AnyDesk123!"
-             Write-Host "======================"
-          } else {
-             Write-Error "Could not find Cloudflare URL in logs. Printing logs for debug:"
-             $log | Out-String | Write-Host
-             exit 1
-          }
+          Write-Host "============================"
+          Write-Host "CRD SETUP COMPLETE!"
+          Write-Host "Connect at: https://remotedesktop.google.com/access"
+          Write-Host "Look for device: 'GitHub-Runner'"
+          Write-Host "Your PIN is: $pin"
+          Write-Host "============================"
 
       - name: Keep Alive
         run: |
           while ($true) {
-            Write-Host "[$(Get-Date)] Cloudflare Tunnel Active..."
+            Write-Host "[$(Get-Date)] Chrome Remote Desktop Active..."
             Start-Sleep -Seconds 300
           }
 
