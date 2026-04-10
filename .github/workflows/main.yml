@@ -54,7 +54,7 @@ jobs:
              $hostPart = $cleanAddress.Split(":")[0]
              $portPart = $cleanAddress.Split(":")[1]
              $ip = [System.Net.Dns]::GetHostAddresses($hostPart)[0].IPAddressToString
-             $ipAddress = "$ip:$portPart"
+             $ipAddress = $ip + ":" + $portPart
              
              Write-Host "===================================="
              Write-Host "RDP TUNNEL READY - DNS BYPASS"
