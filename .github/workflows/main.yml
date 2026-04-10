@@ -46,7 +46,7 @@ jobs:
           
           Write-Host "Creating SSH Tunnel via Pinggy..."
           # Start SSH tunnel targeting port 443 with strict host checking disabled
-          Start-Process -FilePath "ssh" -ArgumentList "-p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:127.0.0.1:3389 tcp@a.pinggy.io" -NoNewWindow -RedirectStandardError "pinggy.log" -RedirectStandardOutput "pinggy.log"
+          Start-Process -FilePath "ssh" -ArgumentList "-p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:127.0.0.1:3389 tcp@a.pinggy.io" -NoNewWindow -RedirectStandardError "pinggy_err.log" -RedirectStandardOutput "pinggy.log"
           
           Write-Host "Waiting for tunnel initialization..."
           Start-Sleep -Seconds 15
