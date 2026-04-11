@@ -7,72 +7,143 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
-
     permissions:
       contents: write
       actions: read
 
     steps:
-      - name: Enable RDP (The Real Fix)
-        run: |
-          Write-Host "1. Enabling Remote Desktop Registry..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          
-          Write-Host "2. Allowing RDP through Windows Firewall..."
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          Write-Host "3. Forcing secure NLA (Required for runneradmin)..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-          
-          Write-Host "4. Setting password for the built-in 'runneradmin'..."
-          $password = ConvertTo-SecureString "Windows123!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Setup Ngrok Tunnel (Reliable)
+      - name: Configure Core RDP Settings
         run: |
-          Write-Host "Downloading Ngrok..."
-          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath . -Force
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
+
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
           
-          Write-Host "Configuring Ngrok..."
-          # Uses your existing GitHub Secret for Ngrok
-          .\ngrok.exe config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          # For testing, allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
+        run: |
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)      # A-Z
+              Lower   = [char[]](97..122)     # a-z
+              Number  = [char[]](48..57)      # 0-9
+              Special = ([char[]](33..47) + [char[]](58..64) +
+                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           
-          Write-Host "Starting Ngrok tunnel..."
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           
-          # Wait for tunnel initialization
-          Start-Sleep -Seconds 10
-          
-          try {
-             $tunnel = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
-             $address = $tunnel.tunnels[0].public_url
-             $cleanAddress = $address.Replace("tcp://", "")
-             
-             # The User's local network is blocking DNS resolution for ngrok.io.
-             # We will resolve the IP address here on the runner and give them the raw IP.
-             $hostPart = $cleanAddress.Split(":")[0]
-             $portPart = $cleanAddress.Split(":")[1]
-             $ip = [System.Net.Dns]::GetHostAddresses($hostPart)[0].IPAddressToString
-             $ipAddress = "${ip}:${portPart}"
-             
-             Write-Host "===================================="
-             Write-Host "RDP TUNNEL READY - DNS BYPASS"
-             Write-Host "1. Open Windows Remote Desktop Connection"
-             Write-Host "2. Paste this exact RAW IP AND PORT:"
-             Write-Host "   ADDRESS:  $ipAddress"
-             Write-Host "3. Username: runneradmin"
-             Write-Host "4. Password: Windows123!"
-             Write-Host "===================================="
-          } catch {
-             Write-Error "Failed to retrieve Ngrok URL. Check if NGROK_AUTH_TOKEN secret is set correctly."
-             exit 1
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
           }
 
-      - name: Keep Alive
+      - name: Install Tailscale
         run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          # Bring up Tailscale with the provided auth key and set a unique hostname
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          
+          # Wait for Tailscale to assign an IP
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+      
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          
+          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Write Credentials to File
+        run: |
+          $credContent = "$env:TAILSCALE_IP`nRDP`n$env:RDP_PASSWORD"
+          $credContent | Out-File -FilePath "rdp_creds.txt" -Encoding UTF8 -NoNewline
+          
+          Write-Host "Credentials written to file"
+          Write-Host "File content:"
+          Get-Content "rdp_creds.txt"
+          
+      - name: Commit Credentials File
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git config --global --add safe.directory $env:GITHUB_WORKSPACE
+          
+          git status
+          git add rdp_creds.txt
+          
+          if (git diff --staged --quiet) {
+              Write-Host "No changes to commit"
+          } else {
+              git commit -m "Add RDP credentials [skip ci]"
+              git push origin $env:GITHUB_REF_NAME
+              Write-Host "Credentials file committed and pushed"
+          }
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host "Credentials file: rdp_creds.txt"
+          Write-Host "==================`n"
+          
+          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
-            Write-Host "[$(Get-Date)] Chrome Remote Desktop Active..."
-            Start-Sleep -Seconds 300
+              Write-Host "[$(Get-Date)] RDP Active - IP: $env:TAILSCALE_IP - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
           }
-
